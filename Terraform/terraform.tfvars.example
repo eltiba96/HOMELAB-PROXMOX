@@ -1,0 +1,74 @@
+# Copy to terraform.tfvars and fill in your own values.
+# terraform.tfvars is gitignored — never commit real secrets.
+
+# PROXMOX
+pm_api_url          = "https://<proxmox-host>:8006/api2/json"
+pm_api_token_id     = "terraform@pve!terraform"
+pm_api_token_secret = "<your-proxmox-api-token-secret>"
+target_node         = "pve"
+#template = "ubuntu-24-04-cloud-init-template"
+
+# NETWORK
+network_bridge = "vmbr0"
+
+user = "<your-user>"
+# VM management SSH public key
+ssh_key = "ssh-ed25519 <your-public-key> <comment>"
+
+# VM Configurations Array
+vm_configs = [
+  {
+    name        = "vm-master1"
+    vmid        = 201
+    disk_size   = 10
+    cores       = 8
+    memory      = 16384
+    description = "vm-master1"
+    ipconfig0   = "ip=<master-ip>/24,gw=<gateway>"
+  },
+  {
+    name        = "vm-worker1"
+    vmid        = 203
+    disk_size   = 20
+    cores       = 4
+    memory      = 8192
+    description = "vm-worker1"
+    ipconfig0   = "ip=<worker1-ip>/24,gw=<gateway>"
+  },
+  {
+    name        = "vm-worker2"
+    vmid        = 204
+    disk_size   = 20
+    cores       = 4
+    memory      = 8192
+    description = "vm-worker2"
+    ipconfig0   = "ip=<worker2-ip>/24,gw=<gateway>"
+  },
+  {
+    name        = "vm-worker3"
+    vmid        = 205
+    disk_size   = 20
+    cores       = 4
+    memory      = 8192
+    description = "vm-worker3"
+    ipconfig0   = "ip=<worker3-ip>/24,gw=<gateway>"
+  },
+  {
+    name        = "vm-worker4"
+    vmid        = 206
+    disk_size   = 20
+    cores       = 4
+    memory      = 8192
+    description = "vm-worker4"
+    ipconfig0   = "ip=<worker4-ip>/24,gw=<gateway>"
+  },
+  {
+    name        = "nfs-server"
+    vmid        = 207
+    disk_size   = 100
+    cores       = 4
+    memory      = 8192
+    description = "nfs-server"
+    ipconfig0   = "ip=<nfs-ip>/24,gw=<gateway>"
+  }
+]

@@ -1,0 +1,96 @@
+# === CNPG cluster ===
+
+# Cluster overall status
+kubectl get cluster pg-cluster
+
+# All pods with their scheduled node
+kubectl get pods -o wide
+
+# PostgreSQL pods only
+kubectl get pods -l cnpg.io/cluster=pg-cluster -o wide
+
+# Clean view: pod name, status, role, node
+kubectl get pods -l cnpg.io/cluster=pg-cluster -o custom-columns=NAME:.metadata.name,STATUS:.status.phase,ROLE:.metadata.labels.role,NODE:.spec.nodeName
+
+# PostgreSQL pods with role label (primary/replica)
+kubectl get pods -l cnpg.io/cluster=pg-cluster -L role
+
+# Watch pods in real time
+kubectl get pods -l cnpg.io/cluster=pg-cluster -w
+
+# Full cluster details
+kubectl describe cluster pg-cluster
+
+# PVC status (volumes)
+kubectl get pvc
+
+# PV status and binding
+kubectl get pv
+
+# Stream logs from primary pod
+kubectl logs -f pg-cluster-1
+
+# Recent cluster events
+kubectl get events --sort-by='.lastTimestamp' | grep pg-cluster
+
+# Auto-created services
+kubectl get svc -l cnpg.io/cluster=pg-cluster
+
+
+# === General ===
+
+# List pods in current namespace
+kubectl get pods
+
+# List pods in a specific namespace
+kubectl get pods -n postgresql
+
+# List pods across all namespaces with details (IP, node)
+kubectl get pods -A -o wide
+
+# List all resources in all namespaces
+kubectl get all -A
+
+# List only Running pods
+kubectl get pods -A --field-selector=status.phase=Running
+
+# Watch pods in real time
+kubectl get pods -A -w
+
+
+# === Cleanup — postgresql namespace ===
+
+# Delete StatefulSet (also deletes its pods)
+kubectl -n postgresql delete statefulset postgres
+
+# Delete everything in the postgresql namespace
+kubectl -n postgresql delete all --all
+kubectl -n postgresql delete configmap --all
+kubectl -n postgresql delete secret --all
+kubectl -n postgresql delete pvc --all
+
+# Delete using manifest
+kubectl delete -f postgres.yaml -n postgresql
+
+# Delete namespace entirely
+kubectl delete namespace postgresql
+
+
+# === Cleanup — default namespace ===
+
+# Delete a specific pod
+kubectl delete pod postgres-0 -n default
+
+# List and delete StatefulSet in default namespace
+kubectl get statefulset -n default
+kubectl delete statefulset postgres -n default
+
+# Force-delete a stuck pod
+kubectl delete pod postgres-0 -n default --force --grace-period=0
+
+# Check and delete associated PVCs
+kubectl get pvc -n default
+kubectl delete pvc data-postgres-0 -n default
+
+# Overview of postgres resources in default namespace
+kubectl get all,pvc,configmap,secret -n default | grep postgres

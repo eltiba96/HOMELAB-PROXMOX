@@ -1,0 +1,225 @@
+---
+- name: Install Kubernetes Worker Nodes
+  hosts: vm-worker
+  become: yes
+  vars:
+    # Kubernetes minor version — keep in sync with the master playbook
+    kubernetes_version: "1.36"
+
+  tasks:
+    ### --- Get a fresh join command from the master ---
+    # Tokens expire after 24h, so generate one on the fly instead of hardcoding it
+    - name: Generate join command on the master node
+      ansible.builtin.command: kubeadm token create --print-join-command
+      delegate_to: vm-master1
+      become: yes
+      run_once: true
+      register: join_cmd_output
+
+    - name: Set join command fact
+      ansible.builtin.set_fact:
+        kube_join_command: "{{ join_cmd_output.stdout }}"
+
+    ### --- Disable swap ---
+    - name: Disable swap immediately
+      ansible.builtin.command: swapoff -a
+      when: ansible_swaptotal_mb > 0
+
+    - name: Comment out swap in /etc/fstab to disable at boot
+      ansible.builtin.replace:
+        path: /etc/fstab
+        regexp: '^([^#].*swap.*)$'
+        replace: '# \1'
+
+    ### --- Required kernel modules ---
+    - name: Create kernel modules file
+      ansible.builtin.copy:
+        dest: /etc/modules-load.d/containerd.conf
+        content: |
+          overlay
+          br_netfilter
+
+    - name: Load modules immediately
+      ansible.builtin.shell: |
+        modprobe overlay
+        modprobe br_netfilter
+
+    ### --- Sysctl parameters ---
+    - name: Configure network parameters for Kubernetes
+      ansible.builtin.copy:
+        dest: /etc/sysctl.d/99-kubernetes-cri.conf
+        content: |
+          net.bridge.bridge-nf-call-iptables = 1
+          net.bridge.bridge-nf-call-ip6tables = 1
+          net.ipv4.ip_forward = 1
+
+    - name: Apply sysctl configuration
+      ansible.builtin.command: sysctl --system
+
+    ### --- Base packages ---
+    - name: Install base packages
+      ansible.builtin.apt:
+        name:
+          - apt-transport-https
+          - ca-certificates
+          - curl
+          - software-properties-common
+        update_cache: yes
+        state: present
+
+    ### --- Docker + Containerd ---
+    - name: Add Docker GPG key
+      ansible.builtin.get_url:
+        url: https://download.docker.com/linux/ubuntu/gpg
+        dest: /etc/apt/keyrings/docker.asc
+        mode: '0644'
+
+    - name: Add Docker repository
+      ansible.builtin.copy:
+        dest: /etc/apt/sources.list.d/docker.list
+        content: | 
+          deb [arch=amd64 signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu jammy stable
+
+    - name: Install Docker and Containerd
+      ansible.builtin.apt:
+        name:
+          - docker-ce
+          - docker-ce-cli
+          - containerd.io
+        update_cache: yes
+        state: present
+
+    - name: Add user to docker group
+      ansible.builtin.user:
+        name: leo
+        groups: docker
+        append: yes
+
+    - name: Create Docker daemon configuration
+      ansible.builtin.copy:
+        dest: /etc/docker/daemon.json
+        content: |
+          {
+            "exec-opts": ["native.cgroupdriver=systemd"],
+            "log-driver": "json-file",
+            "log-opts": {
+              "max-size": "100m"
+            },
+            "storage-driver": "overlay2"
+          }
+
+    - name: Enable and start Docker service
+      ansible.builtin.systemd:
+        name: docker
+        enabled: yes
+        state: started
+        daemon_reload: yes
+
+    - name: Configure containerd with proper CRI settings
+      ansible.builtin.shell: |
+        mkdir -p /etc/containerd
+        containerd config default > /etc/containerd/config.toml
+        # Enable systemd cgroup driver
+        sed -i 's/SystemdCgroup = false/SystemdCgroup = true/' /etc/containerd/config.toml
+        # Enable CRI plugin
+        sed -i 's/disabled_plugins/#disabled_plugins/' /etc/containerd/config.toml
+
+    - name: Enable and start containerd service
+      ansible.builtin.systemd:
+        name: containerd
+        enabled: yes
+        state: restarted
+        daemon_reload: yes
+
+    - name: Wait for containerd to be ready
+      ansible.builtin.pause:
+        seconds: 10
+
+    ### --- Kubernetes install ---
+    - name: Install crictl for CRI debugging
+      ansible.builtin.shell: |
+        CRICTL_VERSION="v{{ kubernetes_version }}.0"
+        wget https://github.com/kubernetes-sigs/cri-tools/releases/download/$CRICTL_VERSION/crictl-$CRICTL_VERSION-linux-amd64.tar.gz
+        tar zxvf crictl-$CRICTL_VERSION-linux-amd64.tar.gz -C /usr/local/bin
+        rm -f crictl-$CRICTL_VERSION-linux-amd64.tar.gz
+        chmod +x /usr/local/bin/crictl
+      args:
+        creates: /usr/local/bin/crictl
+
+    - name: Download and install Kubernetes GPG key
+      ansible.builtin.shell: |
+        curl -fsSL https://pkgs.k8s.io/core:/stable:/v{{ kubernetes_version }}/deb/Release.key | gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg
+      args:
+        creates: /etc/apt/keyrings/kubernetes-apt-keyring.gpg
+
+    - name: Set permissions for Kubernetes GPG key
+      ansible.builtin.file:
+        path: /etc/apt/keyrings/kubernetes-apt-keyring.gpg
+        mode: '0644'
+
+    - name: Add Kubernetes repository
+      ansible.builtin.copy:
+        dest: /etc/apt/sources.list.d/kubernetes.list
+        content: |
+          deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/v{{ kubernetes_version }}/deb/ /
+
+    - name: Install kubelet and kubeadm (no kubectl needed on workers)
+      ansible.builtin.apt:
+        name:
+          - "kubelet={{ kubernetes_version }}.*"
+          - "kubeadm={{ kubernetes_version }}.*"
+        state: present
+        update_cache: yes
+
+    - name: Hold Kubernetes packages version
+      ansible.builtin.command: apt-mark hold kubelet kubeadm
+
+    - name: Enable kubelet
+      ansible.builtin.systemd:
+        name: kubelet
+        enabled: yes
+
+    ### --- Runtime verification ---
+    - name: Verify Docker is running
+      ansible.builtin.shell: |
+        systemctl is-active docker
+        docker --version
+      register: docker_check
+
+    - name: Verify containerd is running
+      ansible.builtin.shell: |
+        systemctl is-active containerd
+        crictl version
+      register: containerd_check
+      ignore_errors: yes
+
+    - name: Show runtime status
+      ansible.builtin.debug:
+        msg: |
+          Docker Status: {{ docker_check.stdout_lines | join(' ') }}
+          Containerd Status: {{ 'OK' if containerd_check.rc == 0 else 'Failed' }}
+
+    ### --- Join cluster ---
+    - name: Join worker node to cluster
+      ansible.builtin.command: "{{ kube_join_command }}"
+      args:
+        creates: /etc/kubernetes/kubelet.conf
+      register: join_result
+
+    - name: Show join result
+      ansible.builtin.debug:
+        var: join_result.stdout_lines
+      when: join_result.stdout_lines is defined
+
+    - name: Verify node joined successfully
+      ansible.builtin.shell: systemctl is-active kubelet
+      register: kubelet_status
+
+    - name: Show final status
+      ansible.builtin.debug:
+        msg: |
+          Worker node setup complete!
+          Kubelet status: {{ kubelet_status.stdout }}
+          
+          To verify the node joined the cluster, run on the master:
+          kubectl get nodes

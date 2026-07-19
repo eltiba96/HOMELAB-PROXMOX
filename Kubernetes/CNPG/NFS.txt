@@ -1,0 +1,11 @@
+# LEGACY — the cluster now uses local-path storage (see README). Kept for reference.
+# Update Helm installation with the correct NFS path
+helm upgrade nfs-subdir-external-provisioner nfs-subdir-external-provisioner/nfs-subdir-external-provisioner \
+  --set nfs.server=192.168.23.55 \
+  --set nfs.path=/zfs-ssd/pgdata \
+  --set storageClass.name=nfs-storage \
+  --set storageClass.defaultClass=false \
+  --set storageClass.reclaimPolicy=Retain
+
+# Monitor the provisioner
+kubectl get pods -l app=nfs-subdir-external-provisioner -w

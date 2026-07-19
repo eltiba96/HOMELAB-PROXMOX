@@ -1,0 +1,70 @@
+---
+- name: Firewall configuration with UFW
+  hosts: all
+  become: yes
+
+  vars:
+    pod_network_cidr: "10.244.0.0/16"
+    # TCP ports to open
+    firewall_ports:
+      - 22       # SSH
+      - 6443     # Kubernetes API server
+      - 2379     # etcd server client API
+      - 2380     # etcd server peer communication
+      - 10250    # Kubelet API
+      - 10259    # kube-scheduler
+      - 10257    # kube-controller-manager
+      - 30000:32767 # NodePort range
+
+  tasks:
+    - name: Install UFW if not present
+      ansible.builtin.apt:
+        name: ufw
+        state: present
+        update_cache: yes
+
+    # Allow SSH first so enabling UFW can never lock us out
+    - name: Allow SSH
+      community.general.ufw:
+        rule: allow
+        port: 22
+        proto: tcp
+
+    - name: Allow TCP ports defined in firewall_ports
+      community.general.ufw:
+        rule: allow
+        port: "{{ item }}"
+        proto: tcp
+      loop: "{{ firewall_ports }}"
+
+    - name: Allow Flannel VXLAN (pod network between nodes)
+      community.general.ufw:
+        rule: allow
+        port: 8472
+        proto: udp
+
+    - name: Allow all traffic from the pod network
+      community.general.ufw:
+        rule: allow
+        from_ip: "{{ pod_network_cidr }}"
+
+    - name: Default deny incoming
+      community.general.ufw:
+        default: deny
+        direction: incoming
+
+    - name: Default allow outgoing
+      community.general.ufw:
+        default: allow
+        direction: outgoing
+
+    # Pod-to-pod traffic is forwarded through the node (cni0 <-> flannel.1):
+    # without this, a default-deny FORWARD chain breaks the cluster network
+    - name: Default allow routed (pod traffic forwarding)
+      community.general.ufw:
+        default: allow
+        direction: routed
+
+    - name: Enable UFW
+      community.general.ufw:
+        state: enabled

@@ -1,0 +1,4 @@
+# After workers join the cluster, label them on the master node:
+kubectl label node vm-worker1 node-role.kubernetes.io/worker=worker
+kubectl label node vm-worker2 node-role.kubernetes.io/worker=worker
+kubectl label node vm-worker3 node-role.kubernetes.io/worker=worker

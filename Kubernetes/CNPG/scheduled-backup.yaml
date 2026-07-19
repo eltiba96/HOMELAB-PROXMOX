@@ -1,0 +1,14 @@
+# Daily base backup at 02:00 — WAL archiving runs continuously in between,
+# so point-in-time recovery is possible from any moment after the last base backup.
+apiVersion: postgresql.cnpg.io/v1
+kind: ScheduledBackup
+metadata:
+  name: pg-cluster-daily-backup
+  namespace: default
+spec:
+  # CNPG cron format has 6 fields: seconds minutes hours day month weekday
+  schedule: "0 0 2 * * *"
+  backupOwnerReference: self
+  cluster:
+    name: pg-cluster
+  immediate: true

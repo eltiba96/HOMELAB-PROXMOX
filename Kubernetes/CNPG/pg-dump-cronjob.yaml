@@ -1,0 +1,59 @@
+# Daily logical dump of appdb to S3-compatible storage.
+# Complements WAL archiving: protects against logical corruption and gives an
+# easy cross-version restore path (pg_restore works on any Postgres >= dump version).
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: pg-logical-dump
+  namespace: default
+spec:
+  schedule: "0 3 * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      template:
+        spec:
+          restartPolicy: Never
+          initContainers:
+            - name: pg-dump
+              image: ghcr.io/cloudnative-pg/postgresql:18
+              command:
+                - /bin/sh
+                - -c
+                - pg_dump -h pg-cluster-rw -U postgres -d appdb -F c -f /backup/appdb-$(date +%Y-%m-%d).dump
+              env:
+                - name: PGPASSWORD
+                  valueFrom:
+                    secretKeyRef:
+                      name: pg-cluster-superuser
+                      key: password
+              volumeMounts:
+                - name: backup
+                  mountPath: /backup
+          containers:
+            - name: s3-upload
+              image: amazon/aws-cli:latest
+              command:
+                - /bin/sh
+                - -c
+                - aws s3 cp /backup/ s3://CHANGE-ME-bucket/logical-dumps/ --recursive --endpoint-url https://s3.eu-central-003.backblazeb2.com
+              env:
+                - name: AWS_ACCESS_KEY_ID
+                  valueFrom:
+                    secretKeyRef:
+                      name: pg-backup-creds
+                      key: ACCESS_KEY_ID
+                - name: AWS_SECRET_ACCESS_KEY
+                  valueFrom:
+                    secretKeyRef:
+                      name: pg-backup-creds
+                      key: SECRET_ACCESS_KEY
+              volumeMounts:
+                - name: backup
+                  mountPath: /backup
+          volumes:
+            - name: backup
+              emptyDir: {}

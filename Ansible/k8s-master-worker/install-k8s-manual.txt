@@ -1,0 +1,138 @@
+swapoff -a
+sed -i '/swap/s/^/#/' /etc/fstab
+shutdown -r now
+
+nano /etc/modules-load.d/containerd.conf
+-----
+overlay
+br_netfilter
+------
+
+modprobe overlay
+modprobe br_netfilter
+
+nano /etc/sysctl.d/99-kubernetes-cri.conf
+----------
+net.bridge.bridge-nf-call-iptables = 1
+net.bridge.bridge-nf-call-ip6tables = 1
+net.ipv4.ip_forward = 1
+--------
+
+sysctl --system
+
+apt update
+apt install -y apt-transport-https ca-certificates curl software-properties-common
+
+# Docker engine installation
+install -m 0755 -d /etc/apt/keyrings
+
+# Docker GPG key for Ubuntu (available on the Docker website)
+sudo curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
+
+chmod 644 /etc/apt/keyrings/docker.asc
+
+# Add Docker repository to APT sources
+echo \
+  "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu \
+  $(. /etc/os-release && echo "${UBUNTU_CODENAME:-$VERSION_CODENAME}") stable" | \
+  sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+sudo apt-get update
+
+# Kubernetes 1.36 stable GPG key
+# If the folder `/etc/apt/keyrings` does not exist, create it before running curl:
+# sudo mkdir -p -m 755 /etc/apt/keyrings
+curl -fsSL https://pkgs.k8s.io/core:/stable:/v1.36/deb/Release.key | sudo gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg
+sudo chmod 644 /etc/apt/keyrings/kubernetes-apt-keyring.gpg # allow unprivileged APT programs to read this keyring
+
+# Add Kubernetes repository
+echo 'deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/v1.36/deb/ /' | sudo tee /etc/apt/sources.list.d/kubernetes.list
+sudo chmod 644 /etc/apt/sources.list.d/kubernetes.list   # helps tools such as command-not-found to work correctly
+
+
+apt update
+
+
+apt install -y docker-ce docker-ce-cli containerd.io
+# docker-ce: Docker engine daemon — manages container creation, execution, and orchestration
+# docker-ce-cli: CLI to interact with the Docker daemon
+# containerd.io: lightweight, standalone container runtime originally developed by Docker
+# modern Kubernetes uses containerd directly (bypassing the Docker daemon)
+
+mkdir -p /etc/containerd
+containerd config default > /etc/containerd/config.toml
+nano /etc/containerd/config.toml
+# inside config.toml, set SystemdCgroup = true (change from false)
+
+systemctl enable containerd
+systemctl restart containerd
+
+# Kubernetes components installation
+apt install -y kubelet=1.36.* kubeadm=1.36.* kubectl=1.36.*
+
+# kubelet: agent running on every node, manages pods
+# kubeadm: initializes and manages the cluster
+# kubectl: CLI to interact with the cluster
+
+apt-mark hold kubelet kubeadm kubectl
+# pin versions — prevents accidental upgrades via APT
+
+systemctl enable kubelet
+
+
+# Kubernetes cluster initialization
+
+mkdir -p /etc/kubernetes
+
+
+nano  /etc/kubernetes/kubeadm-config.yaml
+-----
+kind: ClusterConfiguration
+apiVersion: kubeadm.k8s.io/v1beta4
+networking:
+  podSubnet: "10.244.0.0/16"
+---
+kind: KubeletConfiguration
+apiVersion: kubelet.config.k8s.io/v1beta1
+runtimeRequestTimeout: "15m"
+cgroupDriver: "systemd"
+systemReserved:
+  cpu: 100m
+  memory: 350M
+kubeReserved:
+  cpu: 100m
+  memory: 50M
+enforceNodeAllocatable:
+- pods
+
+# Initialize the cluster
+kubeadm init --config /etc/kubernetes/kubeadm-config.yaml --upload-certs
+
+# If running as root, export the kubeconfig
+export KUBECONFIG=/etc/kubernetes/admin.conf
+
+# Pod network setup using Flannel CNI
+# Enables pod communication across different nodes
+kubectl apply -f https://github.com/flannel-io/flannel/releases/latest/download/kube-flannel.yml
+
+# --- END OF MASTER NODE SETUP ---
+
+----------------------
+
+# --- WORKER NODE SETUP ---
+
+swapoff -a
+sed -i '/swap/s/^/#/' /etc/fstab
+shutdown -r now
+
+
+# Repeat all installation steps above up to:
+systemctl enable kubelet
+
+------------
+
+# Once done, go back to the master node and generate the join command:
+kubeadm token create --print-join-command
+# Copy the printed command and run it on each worker node
+
+# Back on the master, verify the worker joined:
+kubectl get nodes

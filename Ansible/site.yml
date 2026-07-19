@@ -1,0 +1,7 @@
+---
+# Full cluster bring-up: run from the Ansible/ directory with `ansible-playbook site.yml`
+# Order matters: firewall first, then the master (control plane), then workers.
+
+- import_playbook: firewall/firewall.yml
+- import_playbook: k8s-master-worker/playbook-master-install-k8s.yml
+- import_playbook: k8s-master-worker/playbook-worker-install-k8s.yml

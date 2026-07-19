@@ -1,0 +1,9 @@
+# If VMs are recreated, remove stale SSH host keys to avoid connection errors
+ssh-keygen -f '/home/leo/.ssh/known_hosts' -R '192.168.23.83'
+ssh-keygen -f '/home/leo/.ssh/known_hosts' -R '192.168.23.84'
+ssh-keygen -f '/home/leo/.ssh/known_hosts' -R '192.168.23.85'
+
+# Alternatively, host key checking is already disabled in inventory.ini:
+[all:vars]
+ansible_user=leo
+ansible_ssh_common_args='-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'

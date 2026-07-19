@@ -1,0 +1,64 @@
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: pg-cluster
+  namespace: default
+spec:
+  instances: 3
+
+  imageName: ghcr.io/cloudnative-pg/postgresql:18
+
+  superuserSecret:
+    name: pg-cluster-superuser
+
+  # Local storage per node — replication is handled by Postgres itself (3 instances
+  # with anti-affinity), so a shared NFS volume would only be a single point of failure.
+  # Requires local-path-provisioner: see README.
+  storage:
+    storageClass: local-path
+    size: 10Gi
+
+  bootstrap:
+    initdb:
+      database: appdb
+      owner: postgres
+      secret:
+        name: pg-cluster-superuser
+        #name: app-user-secret
+
+  # Pod anti-affinity — one instance per node
+  affinity:
+    enablePodAntiAffinity: true
+    topologyKey: kubernetes.io/hostname
+
+  postgresql:
+    pg_hba:
+      - host all all 0.0.0.0/0 scram-sha-256
+      - host all all ::/0 scram-sha-256
+
+  # Faster failover settings
+  failoverDelay: 0
+  switchoverDelay: 40000000
+
+  # Force pod termination after timeout
+  stopDelay: 30
+  startDelay: 30
+
+  # WAL archiving + base backups to S3-compatible storage (e.g. Backblaze B2)
+  # Credentials live in the pg-backup-creds Secret (see backup-credentials-secret.yaml)
+  backup:
+    retentionPolicy: "7d"
+    barmanObjectStore:
+      destinationPath: s3://CHANGE-ME-bucket/pg-cluster/
+      endpointURL: https://s3.eu-central-003.backblazeb2.com
+      s3Credentials:
+        accessKeyId:
+          name: pg-backup-creds
+          key: ACCESS_KEY_ID
+        secretAccessKey:
+          name: pg-backup-creds
+          key: SECRET_ACCESS_KEY
+      wal:
+        compression: gzip
+      data:
+        compression: gzip
